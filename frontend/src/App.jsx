@@ -3,6 +3,32 @@ import { useState } from "react";
 const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
 
 // ----------------------------------------------------------
+// ANALYTICS
+// Production builds only, so local testing stays out of the stats.
+// Events carry module names only. Never send what people type.
+// ----------------------------------------------------------
+
+const GA_ID = "G-H58YXD291R";
+
+if (import.meta.env.PROD) {
+  const script = document.createElement("script");
+  script.async = true;
+  script.src = `https://www.googletagmanager.com/gtag/js?id=${GA_ID}`;
+  document.head.appendChild(script);
+
+  window.dataLayer = window.dataLayer || [];
+  window.gtag = function () {
+    window.dataLayer.push(arguments);
+  };
+  window.gtag("js", new Date());
+  window.gtag("config", GA_ID);
+}
+
+function track(event, params) {
+  if (window.gtag) window.gtag("event", event, params);
+}
+
+// ----------------------------------------------------------
 // API
 // ----------------------------------------------------------
 
@@ -321,7 +347,7 @@ function buildBody(fields, values) {
   return body;
 }
 
-function useCalculator(fields, run) {
+function useCalculator(fields, run, module) {
   const [values, setValues] = useState(() =>
     Object.fromEntries(fields.map((f) => [f.key, f.value]))
   );
@@ -336,7 +362,9 @@ function useCalculator(fields, run) {
     setResult(null);
     setLoading(true);
     try {
-      setResult(await run(buildBody(fields, values)));
+      const body = buildBody(fields, values);
+      track("calculate", { module });
+      setResult(await run(body));
     } catch (e) {
       setError(e.message);
     } finally {
@@ -410,10 +438,11 @@ function SipVsLoan() {
       postJSON("/breakeven", body),
     ]);
     return { body, calc, split, breakeven };
-  });
+  }, "sip");
   const r = form.result;
 
   const runExtra = async (setState, endpoint, extraBody) => {
+    track("run_analysis", { analysis: endpoint.slice(1) });
     const body = r.body;
     const settle = (patch) =>
       setState((cur) => (cur?.for === body ? { for: body, ...patch } : cur));
@@ -583,7 +612,7 @@ function RentVsBuy() {
   const form = useCalculator(RENT_FIELDS, async (body) => ({
     ...(await postJSON("/rent-vs-buy", body)),
     horizon: body.horizon,
-  }));
+  }), "rent");
   const r = form.result;
 
   return (
@@ -659,7 +688,7 @@ function PrepayVsInvest() {
       throw new Error("One-time surplus can't be more than the outstanding loan.");
     }
     return postJSON("/prepay-vs-invest", body);
-  });
+  }, "prepay");
   const r = form.result;
 
   const breakeven = (value, name) =>
@@ -766,7 +795,7 @@ function taxBreakevenNote(amount, newRegimeTax) {
 }
 
 function TaxRegime() {
-  const form = useCalculator(TAX_FIELDS, (body) => postJSON("/tax-regime", body));
+  const form = useCalculator(TAX_FIELDS, (body) => postJSON("/tax-regime", body), "tax");
   const r = form.result;
 
   return (
@@ -843,7 +872,10 @@ export default function App() {
               key={m.id}
               aria-current={module === m.id ? "page" : undefined}
               style={module === m.id ? { ...S.navButton, ...S.navButtonActive } : S.navButton}
-              onClick={() => setModule(m.id)}
+              onClick={() => {
+                setModule(m.id);
+                track("select_module", { module: m.id });
+              }}
             >
               {m.name}
             </button>
@@ -856,6 +888,10 @@ export default function App() {
             <Component />
           </div>
         ))}
+        <p style={S.disclaimer}>
+          We use Google Analytics cookies to see which tools get used. The numbers you type are
+          never sent to it.
+        </p>
       </div>
     </div>
   );
