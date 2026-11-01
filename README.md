@@ -18,8 +18,8 @@ A calculator for the Indian homebuyer's dilemma: when you need cash for a house 
 | `model.py` | Core SIP vs loan engine (all calculations) |
 | `rentbuy.py`, `prepay.py`, `tax.py` | Rent vs buy, prepay vs invest, tax regime modules |
 | `explain.py` | Gemini narration layer |
-| `app.py` | Streamlit front end |
 | `backend.py` | FastAPI backend exposing the engine as an API |
+| `frontend/` | React front end (Vite) |
 | `practiceapi.py` | FastAPI practice/scratch file |
 
 ## Setup
@@ -39,12 +39,6 @@ GEMINI_API_KEY=your-gemini-api-key-here
 The calculators work without a key; only the explanation feature needs it.
 
 ## Running
-
-Streamlit app:
-
-```bash
-streamlit run app.py
-```
 
 FastAPI backend (interactive docs at http://127.0.0.1:8000/docs):
 
@@ -66,4 +60,4 @@ Open http://localhost:5173. It calls `http://127.0.0.1:8000` unless you set `VIT
 
 ## Dependencies
 
-streamlit, pandas, numpy, fastapi, uvicorn, pydantic, google-genai, python-dotenv (pinned versions in `requirements.txt`).
+fastapi, uvicorn, pydantic, google-genai, python-dotenv (pinned versions in `requirements.txt`).
