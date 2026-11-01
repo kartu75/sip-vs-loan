@@ -208,7 +208,7 @@ def explain(data: MonteCarloInput):
         monthly_sip=data.monthly_sip, loan_tenure=data.loan_tenure,
         loan_rate=data.loan_rate, tax_slab=data.tax_slab, regime=data.regime,
         horizon=data.horizon, mean_return=data.equity_return,
-        volatility=data.volatility, n_sims=min(data.n_sims, 500),
+        volatility=data.volatility, n_sims=data.n_sims,
         stepup_rate=data.stepup_rate, reinvest_emi=data.reinvest_emi,
     )
     facts = facts_from_results(results, mc, data.horizon, data.regime,

@@ -298,6 +298,28 @@ def find_breakevens(corpus, invested, cash_need, monthly_sip, loan_tenure,
 # MONTE CARLO  — returns as a distribution, not a point estimate
 # ==========================================================
 
+def _wealth_on_path(details, yearly_returns, monthly_sip, loan_tenure,
+                    stepup_rate, reinvest_emi, ref_emi):
+    """
+    Same wealth as evaluate_split, but equity earns a different return each
+    year. Walks the years one at a time: last year's balance grows at this
+    year's return, then this year's 12 monthly cash flows are added.
+
+    When every year's return is equal this matches evaluate_split exactly
+    (see the self-test below).
+    """
+    wealth = details["corpus_remaining"]
+    emi = details["emi"]
+    for y, r in enumerate(yearly_returns):
+        monthly_flow = monthly_sip * ((1 + stepup_rate) ** y)
+        if y < loan_tenure:
+            # same two framings as evaluate_split
+            monthly_flow += max(0.0, ref_emi - emi) if reinvest_emi else -emi
+        wealth = (fv_lumpsum(wealth, r, 1)
+                  + fv_monthly_contributions(monthly_flow, r, 1))
+    return wealth + details["tax_saved"]
+
+
 def monte_carlo(corpus, invested, cash_need, monthly_sip, loan_tenure,
                 loan_rate, tax_slab, regime, horizon,
                 mean_return=0.12, volatility=0.18,
@@ -306,9 +328,10 @@ def monte_carlo(corpus, invested, cash_need, monthly_sip, loan_tenure,
                 stepup_rate=0.0, reinvest_emi=False,
                 n_sims=2000, seed=42):
     """
-    Instead of assuming a fixed equity return, draw a random annualized return
-    for each simulated life (normal around mean_return with given volatility),
-    and see who wins — redeem vs loan — in each world.
+    Instead of assuming a fixed equity return, simulate market paths: each
+    simulated life draws a new random return for every year (normal around
+    mean_return with given volatility). Loan and redeem live through the SAME
+    path, and we see who wins in each world.
 
     Returns dict with win probability for the loan, plus wealth distributions
     (percentiles) for both paths.
@@ -319,21 +342,27 @@ def monte_carlo(corpus, invested, cash_need, monthly_sip, loan_tenure,
 
     tax = dict(ltcg_exemption=ltcg_exemption, ltcg_rate=ltcg_rate,
                sec_24b_limit=sec_24b_limit, sec_80c_limit=sec_80c_limit)
+    base = dict(corpus=corpus, invested=invested, cash_need=cash_need,
+                monthly_sip=monthly_sip, loan_tenure=loan_tenure,
+                loan_rate=loan_rate, equity_return=mean_return, tax_slab=tax_slab,
+                horizons=(horizon,), stepup_rate=stepup_rate,
+                reinvest_emi=reinvest_emi)
+
+    # EMI, tax saved and corpus left don't depend on returns, so compute them once
+    _, loan_details   = evaluate_split(0.0, regime=regime, **base, **tax)
+    _, redeem_details = evaluate_split(1.0, regime=regime, **base, **tax)
+    ref_emi = calculate_emi(cash_need, loan_rate, loan_tenure) if reinvest_emi else 0.0
+    path_args = dict(monthly_sip=monthly_sip, loan_tenure=loan_tenure,
+                     stepup_rate=stepup_rate, reinvest_emi=reinvest_emi,
+                     ref_emi=ref_emi)
 
     for _ in range(n_sims):
-        # one sampled annualized return for this whole simulated life
-        r = rng.gauss(mean_return, volatility)
-        r = max(-0.9, r)   # floor: can't lose more than ~everything in a year
+        # floor: can't lose more than ~everything in a year
+        path = [max(-0.9, rng.gauss(mean_return, volatility))
+                for _ in range(horizon)]
 
-        base = dict(corpus=corpus, invested=invested, cash_need=cash_need,
-                    monthly_sip=monthly_sip, loan_tenure=loan_tenure,
-                    loan_rate=loan_rate, equity_return=r, tax_slab=tax_slab,
-                    horizons=(horizon,), stepup_rate=stepup_rate,
-                    reinvest_emi=reinvest_emi)
-
-        loan_w, _   = evaluate_split(0.0, regime=regime, **base, **tax)
-        redeem_w, _ = evaluate_split(1.0, regime=regime, **base, **tax)
-        lw, rw = loan_w[horizon], redeem_w[horizon]
+        lw = _wealth_on_path(loan_details, path, **path_args)
+        rw = _wealth_on_path(redeem_details, path, **path_args)
         loan_wealths.append(lw)
         redeem_wealths.append(rw)
         diffs.append(lw - rw)
@@ -414,6 +443,20 @@ if __name__ == "__main__":
     be = find_breakevens(**args, regime="old", horizon=15)
     print(f"  break-even equity {be['equity_breakeven']*100:.2f}%, "
           f"loan {be['loan_breakeven']*100:.2f}%")
+
+    # a constant-return path must match the verified engine exactly
+    path_ok = True
+    for reinvest in (False, True):
+        for step in (0.0, 0.10):
+            ref = calculate_emi(1_500_000, 0.09, 15) if reinvest else 0.0
+            for frac in (0.0, 0.5, 1.0):
+                for y in H:
+                    w, d = evaluate_split(frac, regime="old", **args, **TAX, horizons=(y,),
+                                          stepup_rate=step, reinvest_emi=reinvest)
+                    p = _wealth_on_path(d, [0.12] * y, monthly_sip=20_000, loan_tenure=15,
+                                        stepup_rate=step, reinvest_emi=reinvest, ref_emi=ref)
+                    path_ok = path_ok and abs(p - w[y]) <= 0.01
+    print("  constant path==engine:", "OK" if path_ok else "FAIL")
 
     # monte carlo
     mc = monte_carlo(corpus=1_500_000, invested=1_000_000, cash_need=1_500_000,

@@ -539,7 +539,7 @@ function SipVsLoan() {
               variant="ghost"
               busy={explain?.loading}
               busyText="Writing…"
-              onClick={() => runExtra(setExplain, "/explain", { volatility: 0.18, n_sims: 500 })}
+              onClick={() => runExtra(setExplain, "/explain", { volatility: 0.18, n_sims: 2000 })}
             >
               Explain this for me
             </Button>
@@ -555,8 +555,9 @@ function SipVsLoan() {
       )}
 
       <p style={S.disclaimer}>
-        A calculator, not advice. Results use the constant returns you enter, and the projections
-        are not guaranteed. LTCG is taxed at 12.5% above the ₹1.25 L exemption.
+        A calculator, not advice. The verdict uses the constant returns you enter; Monte Carlo
+        draws a new random return each year around them. Projections are not guaranteed. LTCG is
+        taxed at 12.5% above the ₹1.25 L exemption.
       </p>
     </>
   );
