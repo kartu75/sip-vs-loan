@@ -293,7 +293,7 @@ def prepay_vs_invest_endpoint(data: PrepayInput):
 
 @app.post("/tax-regime")
 def tax_regime_endpoint(data: TaxRegimeInput):
-    """Old vs New income tax regime comparison (FY 2024-25 slabs)."""
+    """Old vs New income tax regime comparison (FY 2026-27 slabs)."""
     r = compare_regimes(data.gross_income, data.old_regime_deductions)
     be = breakeven_deduction(data.gross_income)
     old, new = r["old"], r["new"]
@@ -302,6 +302,7 @@ def tax_regime_endpoint(data: TaxRegimeInput):
             "taxable_income": old.taxable_income,
             "tax_before_rebate": old.tax_before_rebate,
             "tax_after_rebate": old.tax_after_rebate,
+            "surcharge": old.surcharge,
             "cess": old.cess,
             "total_tax": old.total_tax,
             "effective_rate": old.effective_rate,
@@ -310,6 +311,7 @@ def tax_regime_endpoint(data: TaxRegimeInput):
             "taxable_income": new.taxable_income,
             "tax_before_rebate": new.tax_before_rebate,
             "tax_after_rebate": new.tax_after_rebate,
+            "surcharge": new.surcharge,
             "cess": new.cess,
             "total_tax": new.total_tax,
             "effective_rate": new.effective_rate,

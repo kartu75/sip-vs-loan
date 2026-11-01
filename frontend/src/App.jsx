@@ -480,8 +480,8 @@ function SipVsLoan() {
               <Metric label="If you take the loan" value={inr(r.calc.loan_wealth)} />
             </div>
             <Verdict
-              line={r.calc.winner === "loan" ? "Take the loan" : "Redeem the SIP"}
-              qualifier={`by ${inr(r.calc.gap)} at year ${r.body.horizon}`}
+              line={r.calc.winner === "loan" ? "The loan ends ahead" : "Redeeming ends ahead"}
+              qualifier={`by ${inr(r.calc.gap)} at year ${r.body.horizon}, on these assumptions`}
             />
             <p style={S.note}>
               LTCG tax if you redeem: {inrFull(r.calc.redeem_details.ltcg_tax)}. Shortfall borrowed
@@ -576,7 +576,7 @@ const RENT_FIELDS = [
   { key: "rent_growth", label: "Rent growth (% a year)", value: "5", kind: "pct", signed: true },
   { key: "property_appreciation", label: "Property appreciation (% a year)", value: "7", kind: "pct", signed: true },
   { key: "equity_return", label: "Equity return (% a year)", value: "12", kind: "pct", signed: true },
-  { key: "horizon", label: "Horizon (years)", value: "15", kind: "int" },
+  { key: "horizon", label: "Horizon (years)", value: "20", kind: "int" },
 ];
 
 function RentVsBuy() {
@@ -603,8 +603,8 @@ function RentVsBuy() {
             <Metric label="Buy (hold)" value={inr(r.buy_wealth_hold)} />
           </div>
           <Verdict
-            line={r.winner === "buy" ? "Buy the home" : "Keep renting"}
-            qualifier={`by ${inr(Math.abs(r.rent_wealth - r.buy_wealth_hold))} at year ${r.horizon}, against holding the home`}
+            line={r.winner === "buy" ? "Buying ends ahead" : "Renting ends ahead"}
+            qualifier={`by ${inr(Math.abs(r.rent_wealth - r.buy_wealth_hold))} at year ${r.horizon} against holding the home, on these assumptions`}
           />
           <Table
             headers={["Detail", "Amount"]}
@@ -646,11 +646,11 @@ const PREPAY_FIELDS = [
 function prepayVerdict(r) {
   const beatsEmi = r.winner_vs_opt1 === "invest";
   const beatsTenure = r.winner_vs_opt2 === "invest";
-  if (beatsEmi && beatsTenure) return ["Invest the surplus", "it beats both prepay options"];
-  if (!beatsEmi && !beatsTenure) return ["Prepay the loan", "both options beat investing"];
+  if (beatsEmi && beatsTenure) return ["Investing ends ahead", "of both prepay options, on these assumptions"];
+  if (!beatsEmi && !beatsTenure) return ["Prepaying ends ahead", "both options beat investing, on these assumptions"];
   return beatsEmi
-    ? ["Prepay with Reduced Tenure", "it beats investing, but investing beats Reduced EMI"]
-    : ["Prepay with Reduced EMI", "it beats investing, but investing beats Reduced Tenure"];
+    ? ["Reduced Tenure ends ahead", "it beats investing, but investing beats Reduced EMI"]
+    : ["Reduced EMI ends ahead", "it beats investing, but investing beats Reduced Tenure"];
 }
 
 function PrepayVsInvest() {
@@ -758,7 +758,8 @@ const TAX_FIELDS = [
   { key: "old_regime_deductions", label: "Old regime deductions (₹)", value: "250000" },
 ];
 
-function taxBreakevenNote(amount) {
+function taxBreakevenNote(amount, newRegimeTax) {
+  if (newRegimeTax === 0) return "The new regime already charges no tax here, so the old regime can only tie it.";
   if (amount === null) return "Old regime doesn't beat the new one at any deduction level here.";
   if (amount === 0) return "Old regime needs no deductions to match the new one here.";
   return `Old regime wins only if your deductions exceed ${inrFull(amount)}.`;
@@ -787,17 +788,18 @@ function TaxRegime() {
             <Verdict line="It's a tie" qualifier="same tax under both regimes" />
           ) : (
             <Verdict
-              line={r.winner === "new" ? "New regime wins" : "Old regime wins"}
-              qualifier={`saves ${inrFull(r.savings)} a year`}
+              line={r.winner === "new" ? "New regime costs less" : "Old regime costs less"}
+              qualifier={`by ${inrFull(r.savings)} a year`}
             />
           )}
-          <p style={S.note}>{taxBreakevenNote(r.breakeven_old_deductions)}</p>
+          <p style={S.note}>{taxBreakevenNote(r.breakeven_old_deductions, r.new.total_tax)}</p>
           <Table
             headers={["", "Old regime", "New regime"]}
             rows={[
               ["Taxable income", inrFull(r.old.taxable_income), inrFull(r.new.taxable_income)],
               ["Tax before rebate", inrFull(r.old.tax_before_rebate), inrFull(r.new.tax_before_rebate)],
               ["Tax after rebate", inrFull(r.old.tax_after_rebate), inrFull(r.new.tax_after_rebate)],
+              ["Surcharge", inrFull(r.old.surcharge), inrFull(r.new.surcharge)],
               ["Cess", inrFull(r.old.cess), inrFull(r.new.cess)],
               ["Total tax", inrFull(r.old.total_tax), inrFull(r.new.total_tax)],
               ["Effective rate", pct(r.old.effective_rate), pct(r.new.effective_rate)],
@@ -807,9 +809,12 @@ function TaxRegime() {
       )}
 
       <p style={S.disclaimer}>
-        FY 2024-25 slabs. Old regime gets the ₹50,000 standard deduction plus what you enter (80C,
-        80D, HRA, 24(b), NPS 80CCD(1B)). New regime gets a flat ₹75,000 standard deduction only. 87A
-        rebate and marginal relief are applied automatically.
+        FY 2026-27 slabs, for a resident individual below 60 with salary or pension income. Old
+        regime gets the ₹50,000 standard deduction plus what you enter (80C, 80D, HRA, 24(b), NPS
+        80CCD(1B)). New regime gets a flat ₹75,000 standard deduction only. The 87A rebate, surcharge
+        and marginal relief are applied automatically; 87A marginal relief exists only in the new
+        regime. Capital gains and other special-rate income are not modelled. Check your filing
+        against the Income Tax Department's rules.
       </p>
     </>
   );
