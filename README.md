@@ -52,6 +52,18 @@ FastAPI backend (interactive docs at http://127.0.0.1:8000/docs):
 uvicorn backend:app --reload
 ```
 
+## Frontend
+
+React on Vite, in `frontend/`. Start the FastAPI backend first, then in a second terminal:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open http://localhost:5173. It calls `http://127.0.0.1:8000` unless you set `VITE_API_URL`.
+
 ## Dependencies
 
 streamlit, pandas, numpy, fastapi, uvicorn, pydantic, google-genai, python-dotenv (pinned versions in `requirements.txt`).

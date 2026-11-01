@@ -12,6 +12,11 @@ env/
 .pytest_cache/
 .ipynb_checkpoints/
 
+# Node
+node_modules/
+frontend/node_modules/
+frontend/dist/
+
 # Streamlit local secrets
 .streamlit/secrets.toml
 
