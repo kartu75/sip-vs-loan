@@ -8,9 +8,11 @@ Run:   uvicorn backend:app --reload
 Test:  http://127.0.0.1:8000/docs
 """
 
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from model import (compare, find_optimal_split, find_breakevens,
                    monte_carlo, evaluate_split)
@@ -24,11 +26,20 @@ app = FastAPI(title="SIP vs Loan API", version="1.0")
 # ----------------------------------------------------------
 # CORS — lets your React frontend (running on a different port)
 # call this backend. Without this, the browser blocks the request.
-# For now we allow everything; we'll tighten it before deploying.
+# Only the sites in ALLOWED_ORIGINS (comma-separated) get through.
+# Not set = local development only, so forgetting it stays locked down.
 # ----------------------------------------------------------
+ALLOWED_ORIGINS = [
+    origin.strip().rstrip("/")
+    for origin in os.getenv(
+        "ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
+    ).split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],          # later: your real frontend URL
+    allow_origins=ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -42,16 +53,22 @@ TAX = dict(ltcg_exemption=125_000, ltcg_rate=0.125,
 # INPUT SHAPES  (Pydantic models = the contract for each POST)
 # ==========================================================
 
+# limits keep one oversized request from tying up the server
+MAX_YEARS = 60
+MAX_LOAN_YEARS = 50
+MAX_SIMS = 5000
+
+
 class CalcInput(BaseModel):
     corpus: float
     invested: float
     cash_need: float
     monthly_sip: float
-    loan_tenure: int
+    loan_tenure: int = Field(ge=1, le=MAX_LOAN_YEARS)
     loan_rate: float
     equity_return: float
     tax_slab: float
-    horizon: int = 15
+    horizon: int = Field(default=15, ge=1, le=MAX_YEARS)
     regime: str = "old"           # "old" or "new"
     stepup_rate: float = 0.0      # 0.10 = SIP grows 10%/yr
     reinvest_emi: bool = False    # fair-mode toggle
@@ -62,14 +79,14 @@ class MonteCarloInput(BaseModel):
     invested: float
     cash_need: float
     monthly_sip: float
-    loan_tenure: int
+    loan_tenure: int = Field(ge=1, le=MAX_LOAN_YEARS)
     loan_rate: float
     equity_return: float          # used as the mean return
     tax_slab: float
-    horizon: int = 15
+    horizon: int = Field(default=15, ge=1, le=MAX_YEARS)
     regime: str = "old"
     volatility: float = 0.18
-    n_sims: int = 2000
+    n_sims: int = Field(default=2000, ge=1, le=MAX_SIMS)
     stepup_rate: float = 0.0
     reinvest_emi: bool = False
 
@@ -78,18 +95,18 @@ class RentBuyInput(BaseModel):
     property_price: float
     down_payment_pct: float       # 0.20 = 20%
     loan_rate: float
-    loan_tenure: int
+    loan_tenure: int = Field(ge=1, le=MAX_LOAN_YEARS)
     monthly_rent: float
     rent_growth: float            # 0.05 = 5%/yr
     property_appreciation: float  # 0.07 = 7%/yr
     equity_return: float
-    horizon: int = 15
+    horizon: int = Field(default=15, ge=1, le=MAX_YEARS)
 
 
 class PrepayInput(BaseModel):
     principal: float               # outstanding loan amount
     annual_rate: float             # loan interest rate, e.g. 0.09
-    tenure_months: int             # remaining tenure in months
+    tenure_months: int = Field(ge=1, le=MAX_LOAN_YEARS * 12)  # remaining tenure in months
     surplus: float                 # one-time lump sum available
     tax_slab: float                # e.g. 0.30
     sec24b_cap: float = 200_000    # annual interest deduction cap
