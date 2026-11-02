@@ -9,8 +9,10 @@ Test:  http://127.0.0.1:8000/docs
 """
 
 import os
+from datetime import date
+from typing import Literal
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -20,6 +22,7 @@ from explain import explain_decision, facts_from_results
 from rentbuy import rent_vs_buy
 from prepay import compare_prepay_vs_invest
 from tax import compare_regimes, breakeven_deduction
+from sellplan import Fund, Lot, cheapest_plan, timing, payers_from
 
 app = FastAPI(title="SIP vs Loan API", version="1.0")
 
@@ -116,6 +119,36 @@ class PrepayInput(BaseModel):
 class TaxRegimeInput(BaseModel):
     gross_income: float             # total annual income before deductions
     old_regime_deductions: float = 0.0   # 80C + 80D + HRA + Sec24b + NPS etc.
+
+
+MAX_FUNDS = 30
+MAX_LOTS = 600                      # across all funds
+
+
+class LotInput(BaseModel):
+    bought: date
+    units: float = Field(gt=0)
+    cost: float = Field(ge=0)        # total amount paid for these units
+
+
+class FundInput(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    kind: Literal["equity", "elss", "debt", "other"]
+    nav: float = Field(gt=0)                        # today's NAV
+    exit_load: float = Field(default=0.0, ge=0, le=0.1)        # 0.01 = 1%
+    exit_load_days: int = Field(default=0, ge=0, le=3650)
+    nav_31jan2018: float | None = Field(default=None, gt=0)    # equity bought before Feb 2018
+    lots: list[LotInput] = Field(min_length=1)
+
+
+class SellPlanInput(BaseModel):
+    target: float = Field(gt=0)                     # cash needed in hand
+    funds: list[FundInput] = Field(min_length=1, max_length=MAX_FUNDS)
+    sell_on: date                                   # today, in the person's time zone
+    need_by: date | None = None                     # only used by /sell-plan/timing
+    slab_rate: float = Field(default=0.30, ge=0, le=0.30)
+    surcharge: float = Field(default=0.0, ge=0, le=0.37)
+    ltcg_exemption_used: float = Field(default=0.0, ge=0)
 
 
 # ==========================================================
@@ -306,6 +339,36 @@ def prepay_vs_invest_endpoint(data: PrepayInput):
         "winner_vs_opt1": r["winner_vs_opt1"],
         "winner_vs_opt2": r["winner_vs_opt2"],
     }
+
+
+def _sell_funds(data: SellPlanInput):
+    """Check a sell-plan request and turn it into engine inputs."""
+    if sum(len(f.lots) for f in data.funds) > MAX_LOTS:
+        raise HTTPException(422, f"Please keep it to {MAX_LOTS} purchases in total.")
+    for f in data.funds:
+        if any(lot.bought > data.sell_on for lot in f.lots):
+            raise HTTPException(422, f"{f.name}: a purchase date is after today.")
+    return [Fund(f.name, f.kind, f.nav, [Lot(l.bought, l.units, l.cost) for l in f.lots],
+                 f.exit_load, f.exit_load_days, f.nav_31jan2018)
+            for f in data.funds]
+
+
+@app.post("/sell-plan")
+def sell_plan_endpoint(data: SellPlanInput):
+    """Cheapest way to raise the target from mutual funds today (FIFO, lot by lot)."""
+    funds = _sell_funds(data)
+    payer_on = payers_from(data.sell_on, data.slab_rate, data.surcharge, data.ltcg_exemption_used)
+    return cheapest_plan(funds, data.target, data.sell_on, payer_on(data.sell_on))
+
+
+@app.post("/sell-plan/timing")
+def sell_plan_timing_endpoint(data: SellPlanInput):
+    """Whether waiting until need_by, or splitting the sale across 31 March, costs less."""
+    funds = _sell_funds(data)
+    if data.need_by is None or data.need_by <= data.sell_on:
+        raise HTTPException(422, "Please pick a date after today for when you need the money.")
+    return timing(funds, data.target, data.sell_on, data.need_by, data.slab_rate,
+                  data.surcharge, data.ltcg_exemption_used)
 
 
 @app.post("/tax-regime")

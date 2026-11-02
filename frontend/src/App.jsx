@@ -244,6 +244,43 @@ const S = {
   explanation: { whiteSpace: "pre-wrap", lineHeight: 1.7, fontSize: 15, color: "#d8d8d0", margin: "24px 0 0" },
   disclaimer: { fontSize: 13, lineHeight: 1.6, color: "#6a6a62", margin: "32px 0 0" },
   error: { color: "#e06060", fontSize: 15, lineHeight: 1.6, margin: "16px 0 0" },
+  fund: { borderTop: "1px solid #1f1f1d", padding: "24px 0 8px", marginTop: 24 },
+  fundHeader: { display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginBottom: 8 },
+  textInput: {
+    flex: "1 1 220px",
+    minWidth: 0,
+    boxSizing: "border-box",
+    background: "#0a0a0a",
+    border: "1px solid #2a2a27",
+    borderRadius: 8,
+    color: "#f5f5f0",
+    fontFamily: "inherit",
+    fontSize: 15,
+    padding: "10px 12px",
+  },
+  cellInput: {
+    width: 140,
+    boxSizing: "border-box",
+    background: "#0a0a0a",
+    border: "1px solid #2a2a27",
+    borderRadius: 8,
+    color: "#f5f5f0",
+    fontFamily: "inherit",
+    fontSize: 14,
+    padding: "8px 10px",
+    textAlign: "right",
+    colorScheme: "dark",
+  },
+  linkButton: {
+    background: "transparent",
+    border: "none",
+    color: GOLD,
+    fontFamily: "inherit",
+    fontSize: 14,
+    cursor: "pointer",
+    padding: "8px 0",
+  },
+  subhead: { fontSize: 15, color: "#b8b8b0", margin: "32px 0 0" },
 };
 
 // ----------------------------------------------------------
@@ -299,8 +336,8 @@ function Table({ headers, rows }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
-            <tr key={row[0]}>
+          {rows.map((row, r) => (
+            <tr key={`${r}-${row[0]}`}>
               {row.map((cell, i) => (
                 <td key={i} style={i === 0 ? { ...S.td, ...S.tdFirst } : S.td}>
                   {cell}
@@ -850,11 +887,432 @@ function TaxRegime() {
 }
 
 // ----------------------------------------------------------
+// MODULE 5: RAISE CASH (SELL PLAN)
+// Funds and their purchases (lots) are edited as strings, like the other
+// forms, and only turned into numbers when Calculate is pressed.
+// ----------------------------------------------------------
+
+const SELL_FIELDS = [
+  { key: "target", label: "Cash you need in hand (₹)", value: "1000000" },
+  { key: "slab_rate", label: "Your income tax slab (%)", value: "30", kind: "pct" },
+  { key: "surcharge", label: "Surcharge (%), 0 below ₹50 L income", value: "0", kind: "pct" },
+  { key: "ltcg_exemption_used", label: "LTCG exemption already used this year (₹)", value: "0" },
+];
+
+const FUND_KINDS = [
+  ["equity", "Equity"],
+  ["elss", "ELSS (tax saver)"],
+  ["debt", "Debt"],
+  ["other", "Hybrid, gold or international"],
+];
+
+const SAMPLE_FUNDS = [
+  {
+    name: "Flexi cap fund", kind: "equity", nav: "92.40", exit_load: "1", exit_load_days: "365", nav_31jan2018: "",
+    lots: [
+      { bought: "2019-06-10", units: "4200", cost: "168000" },
+      { bought: "2022-03-15", units: "3100", cost: "186000" },
+      { bought: "2024-09-20", units: "2600", cost: "234000" },
+      { bought: "2026-02-12", units: "1150", cost: "100050" },
+    ],
+  },
+  {
+    name: "Nifty 50 index fund", kind: "equity", nav: "245.10", exit_load: "0", exit_load_days: "0", nav_31jan2018: "105.20",
+    lots: [
+      { bought: "2017-08-01", units: "1500", cost: "135000" },
+      { bought: "2021-11-10", units: "800", cost: "144000" },
+    ],
+  },
+  {
+    name: "Tax saver fund", kind: "elss", nav: "118.50", exit_load: "0", exit_load_days: "0", nav_31jan2018: "",
+    lots: [
+      { bought: "2021-01-15", units: "1200", cost: "72000" },
+      { bought: "2023-12-20", units: "1000", cost: "95000" },
+      { bought: "2025-03-10", units: "1300", cost: "150000" },
+    ],
+  },
+  {
+    name: "Short duration debt fund", kind: "debt", nav: "41.20", exit_load: "0", exit_load_days: "0", nav_31jan2018: "",
+    lots: [
+      { bought: "2022-06-01", units: "6000", cost: "198000" },
+      { bought: "2024-01-05", units: "5000", cost: "185000" },
+    ],
+  },
+  {
+    name: "Gold fund", kind: "other", nav: "28.60", exit_load: "0", exit_load_days: "0", nav_31jan2018: "",
+    lots: [{ bought: "2025-02-01", units: "7000", cost: "175000" }],
+  },
+];
+
+const blankLot = () => ({ bought: "", units: "", cost: "" });
+const blankFund = () => ({
+  name: "", kind: "equity", nav: "", exit_load: "1", exit_load_days: "365", nav_31jan2018: "", lots: [blankLot()],
+});
+
+// Dates travel as "YYYY-MM-DD" in the person's own time zone.
+const localToday = () => new Date().toLocaleDateString("en-CA");
+const nextAprilEnd = (today) => {
+  const [year, month] = today.split("-").map(Number);
+  return `${month >= 4 ? year + 1 : year}-04-30`;
+};
+const fmtDate = (iso) =>
+  new Date(`${iso}T00:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+const fmtUnits = (u) => u.toLocaleString("en-IN", { maximumFractionDigits: 3 });
+
+function parseNum(raw, label, { positive = false } = {}) {
+  const text = String(raw).replace(/,/g, "").trim();
+  const n = Number(text);
+  if (text === "" || !Number.isFinite(n)) throw new Error(`${label}: please enter a number.`);
+  if (n < 0 || (positive && n === 0)) throw new Error(`${label}: please enter a number above zero.`);
+  return n;
+}
+
+function buildFunds(funds, today) {
+  return funds.map((f, i) => {
+    const name = f.name.trim() || `Fund ${i + 1}`;
+    const isEquity = f.kind === "equity" || f.kind === "elss";
+    const lots = f.lots.map((l, j) => {
+      const where = `${name}, purchase ${j + 1}`;
+      if (!l.bought) throw new Error(`${where}: please enter the date.`);
+      if (l.bought > today) throw new Error(`${where}: the date is after today.`);
+      return {
+        bought: l.bought,
+        units: parseNum(l.units, `${where} units`, { positive: true }),
+        cost: parseNum(l.cost, `${where} amount paid`),
+      };
+    });
+    if (lots.length === 0) throw new Error(`${name}: add at least one purchase.`);
+    const load = parseNum(f.exit_load, `${name} exit load`);
+    if (load > 10) throw new Error(`${name} exit load: please enter a percentage up to 10.`);
+    return {
+      name,
+      kind: f.kind,
+      nav: parseNum(f.nav, `${name} NAV today`, { positive: true }),
+      exit_load: load / 100,
+      exit_load_days: Math.round(parseNum(f.exit_load_days, `${name} exit load days`)),
+      nav_31jan2018:
+        isEquity && String(f.nav_31jan2018).trim()
+          ? parseNum(f.nav_31jan2018, `${name} NAV on 31 Jan 2018`, { positive: true })
+          : null,
+      lots,
+    };
+  });
+}
+
+function FundsEditor({ funds, setFunds }) {
+  const today = localToday();
+  const editFund = (i, patch) => setFunds((fs) => fs.map((f, k) => (k === i ? { ...f, ...patch } : f)));
+  const editLots = (i, change) =>
+    setFunds((fs) => fs.map((f, k) => (k === i ? { ...f, lots: change(f.lots) } : f)));
+  const editLot = (i, j, patch) =>
+    editLots(i, (lots) => lots.map((l, m) => (m === j ? { ...l, ...patch } : l)));
+
+  return (
+    <>
+      <p style={S.subhead}>
+        Your funds. Enter each purchase from your account statement; SIPs are one purchase a month.
+        Same fund in two folios? Enter it twice.
+      </p>
+      {funds.map((f, i) => (
+        <div key={i} style={S.fund}>
+          <div style={S.fundHeader}>
+            <input
+              style={S.textInput}
+              placeholder="Fund name"
+              aria-label="Fund name"
+              value={f.name}
+              onChange={(e) => editFund(i, { name: e.target.value })}
+            />
+            <select
+              style={{ ...S.input, flex: "0 1 260px", width: 260, marginLeft: 0, textAlign: "left" }}
+              aria-label="Fund type"
+              value={f.kind}
+              onChange={(e) => editFund(i, { kind: e.target.value })}
+            >
+              {FUND_KINDS.map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </div>
+          {[
+            ["nav", "NAV today (₹)"],
+            ["exit_load", "Exit load (%)"],
+            ["exit_load_days", "Charged if sold within (days)"],
+            ...(f.kind === "equity" || f.kind === "elss"
+              ? [["nav_31jan2018", "NAV on 31 Jan 2018 (₹), only for units bought before Feb 2018"]]
+              : []),
+          ].map(([key, label]) => (
+            <label key={key} style={S.row}>
+              <span style={S.rowLabel}>{label}</span>
+              <input
+                style={S.input}
+                inputMode="decimal"
+                value={f[key]}
+                onChange={(e) => editFund(i, { [key]: e.target.value })}
+              />
+            </label>
+          ))}
+          <div style={S.tableWrap}>
+            <table style={S.table}>
+              <thead>
+                <tr>
+                  <th style={{ ...S.th, textAlign: "left", paddingLeft: 0 }}>Bought on</th>
+                  <th style={S.th}>Units</th>
+                  <th style={S.th}>Amount paid (₹)</th>
+                  <th style={S.th} aria-label="Remove" />
+                </tr>
+              </thead>
+              <tbody>
+                {f.lots.map((l, j) => (
+                  <tr key={j}>
+                    <td style={{ ...S.td, textAlign: "left", paddingLeft: 0 }}>
+                      <input
+                        type="date"
+                        style={{ ...S.cellInput, textAlign: "left" }}
+                        aria-label="Date bought"
+                        max={today}
+                        value={l.bought}
+                        onChange={(e) => editLot(i, j, { bought: e.target.value })}
+                      />
+                    </td>
+                    {["units", "cost"].map((key) => (
+                      <td key={key} style={S.td}>
+                        <input
+                          style={S.cellInput}
+                          inputMode="decimal"
+                          aria-label={key === "units" ? "Units" : "Amount paid"}
+                          value={l[key]}
+                          onChange={(e) => editLot(i, j, { [key]: e.target.value })}
+                        />
+                      </td>
+                    ))}
+                    <td style={S.td}>
+                      {f.lots.length > 1 && (
+                        <button
+                          style={S.linkButton}
+                          aria-label="Remove this purchase"
+                          onClick={() => editLots(i, (lots) => lots.filter((_, m) => m !== j))}
+                        >
+                          ×
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ display: "flex", gap: 24 }}>
+            <button style={S.linkButton} onClick={() => editLots(i, (lots) => [...lots, blankLot()])}>
+              + Add a purchase
+            </button>
+            {funds.length > 1 && (
+              <button style={S.linkButton} onClick={() => setFunds((fs) => fs.filter((_, k) => k !== i))}>
+                Remove this fund
+              </button>
+            )}
+          </div>
+        </div>
+      ))}
+      <div style={{ display: "flex", gap: 24, borderTop: "1px solid #1f1f1d", marginTop: 16, paddingTop: 8 }}>
+        <button style={S.linkButton} onClick={() => setFunds((fs) => [...fs, blankFund()])}>
+          + Add a fund
+        </button>
+        <button style={S.linkButton} onClick={() => setFunds([blankFund()])}>
+          Clear the example
+        </button>
+      </div>
+    </>
+  );
+}
+
+function SellPlanTables({ plan }) {
+  const d = plan.tax_detail;
+  return (
+    <>
+      <Table
+        headers={["Fund", "Units to sell", "Value", "Exit load", "Short-term gain", "Long-term gain"]}
+        rows={plan.funds.map((f) => [
+          f.name,
+          fmtUnits(f.units),
+          inrFull(f.value),
+          inrFull(f.exit_load),
+          inrFull(f.short_term_gain),
+          inrFull(f.long_term_gain),
+        ])}
+      />
+      <Table
+        headers={["Tax", "Amount"]}
+        rows={[
+          ["Gains taxed at your slab", inrFull(d.taxed_at_slab)],
+          ["Equity gains taxed at 20% (short-term)", inrFull(d.taxed_at_20)],
+          ["Gains taxed at 12.5% (long-term)", inrFull(d.taxed_at_12_5)],
+          ["Long-term equity gains tax-free (₹1.25 L a year)", inrFull(d.exempt)],
+          ...(d.losses_left > 0.5 ? [["Losses left over, to carry forward", inrFull(d.losses_left)]] : []),
+          ["Tax, with surcharge and cess", inrFull(plan.tax)],
+        ]}
+      />
+    </>
+  );
+}
+
+function SellTiming({ timing, needBy }) {
+  const { now, wait, split } = timing;
+  const instead = now.feasible ? `instead of ${inrFull(now.cost)} today` : "and your funds can't raise it today";
+  if (!wait && !split) {
+    return (
+      <p style={S.note}>
+        Selling today already costs as little as waiting until {fmtDate(needBy)} would, at today's NAVs.
+      </p>
+    );
+  }
+  return (
+    <>
+      {wait && (
+        <>
+          <Verdict line={`Wait until ${fmtDate(wait.sold_on)}`} qualifier={`and it costs ${inrFull(wait.cost)} ${instead}`} />
+          <p style={S.note}>
+            Same NAVs as today. The saving comes from units turning long-term, exit loads ending, ELSS units
+            unlocking or a new year's LTCG exemption.
+          </p>
+          <SellPlanTables plan={wait} />
+        </>
+      )}
+      {split && (
+        <>
+          <Verdict
+            line="Split the sale across 31 March"
+            qualifier={`for a total cost of ${inrFull(split.cost)}, each part using its own year's ₹1.25 L exemption`}
+          />
+          <p style={S.subhead}>
+            Part 1: {inrFull(split.first.cash_in_hand)} in hand on {fmtDate(split.first.sold_on)}
+          </p>
+          <SellPlanTables plan={split.first} />
+          <p style={S.subhead}>
+            Part 2: {inrFull(split.second.cash_in_hand)} in hand on {fmtDate(split.second.sold_on)}
+          </p>
+          <SellPlanTables plan={split.second} />
+        </>
+      )}
+    </>
+  );
+}
+
+function SellPlan() {
+  const [funds, setFunds] = useState(SAMPLE_FUNDS);
+  const [needBy, setNeedBy] = useState(() => nextAprilEnd(localToday()));
+  // { for: body, loading, data, error }, tied to the Calculate run that asked
+  const [when, setWhen] = useState(null);
+
+  const form = useCalculator(SELL_FIELDS, async (fields) => {
+    const today = localToday();
+    const body = { ...fields, sell_on: today, funds: buildFunds(funds, today) };
+    setWhen(null);
+    return { body, plan: await postJSON("/sell-plan", body) };
+  }, "sell");
+  const r = form.result;
+  const plan = r?.plan;
+
+  const checkTiming = async () => {
+    track("run_analysis", { analysis: "sell-timing" });
+    const body = { ...r.body, need_by: needBy };
+    const settle = (patch) => setWhen((cur) => (cur?.for === body ? { for: body, ...patch } : cur));
+    setWhen({ for: body, loading: true });
+    try {
+      if (!needBy || needBy <= body.sell_on) throw new Error("Please pick a date after today.");
+      settle({ data: await postJSON("/sell-plan/timing", body) });
+    } catch (e) {
+      settle({ error: e.message });
+    }
+  };
+
+  return (
+    <>
+      <Hero
+        lines={["raise the cash,", "not the tax"]}
+        sub="Need money from your mutual funds? See which funds to redeem and how many units, so tax and exit loads take the least. This is a calculator, not advice."
+      />
+      <NumbersCard fields={SELL_FIELDS} form={form} extra={<FundsEditor funds={funds} setFunds={setFunds} />} />
+
+      {plan && (
+        <div style={S.card}>
+          <Label>The plan</Label>
+          {plan.feasible ? (
+            <>
+              <div style={S.grid}>
+                <Metric label="Cash in hand" value={inr(plan.cash_in_hand)} sub={inrFull(plan.cash_in_hand)} />
+                <Metric label="Tax + exit load" value={inr(plan.cost)} sub={inrFull(plan.cost)} />
+                <Metric
+                  label="Saved vs selling evenly"
+                  value={inr(Math.max(0, plan.even_split_cost - plan.cost))}
+                  sub={`selling the same share of every fund costs ${inrFull(plan.even_split_cost)}`}
+                />
+              </div>
+              <Verdict
+                line={`Sell ${inr(plan.value)} of funds today`}
+                qualifier={`oldest units first, costing ${inrFull(plan.cost)} in tax and exit load`}
+              />
+              <SellPlanTables plan={plan} />
+            </>
+          ) : (
+            <Verdict
+              line="Your funds can't raise this today"
+              qualifier={`they can put at most ${inr(plan.max_cash)} in hand after tax; the rest has to come from elsewhere, such as a loan`}
+            />
+          )}
+          {plan.locked.map((l) => (
+            <p key={l.name} style={S.note}>
+              {l.name}: {fmtUnits(l.units)} units are still in the 3-year ELSS lock-in; the next ones unlock
+              on {fmtDate(l.next_unlock)}.
+            </p>
+          ))}
+        </div>
+      )}
+
+      {plan && (
+        <div style={S.card}>
+          <Label>When to sell</Label>
+          <label style={S.row}>
+            <span style={S.rowLabel}>Need the money by</span>
+            <input
+              type="date"
+              style={{ ...S.input, colorScheme: "dark" }}
+              min={r.body.sell_on}
+              value={needBy}
+              onChange={(e) => setNeedBy(e.target.value)}
+            />
+          </label>
+          <div style={{ marginTop: 24 }}>
+            <Button variant="ghost" busy={when?.loading} busyText="Checking…" onClick={checkTiming}>
+              Check if waiting costs less
+            </Button>
+          </div>
+          {when?.error && <p style={S.error}>{when.error}</p>}
+          {when?.data && <SellTiming timing={when.data} needBy={when.for.need_by} />}
+        </div>
+      )}
+
+      <p style={S.disclaimer}>
+        A calculator, not advice. Each fund sells its oldest units first (FIFO), as fund houses do. NAVs stay at
+        today's value, so timing never predicts markets. FY 2026-27 rules: equity 20% if held 12 months or less,
+        then 12.5% above ₹1.25 L a year; debt bought from April 2023 at your slab; older debt, hybrid, gold and
+        international funds 12.5% after 24 months, slab before. Assumes your slab doesn't change and ignores STT
+        and exit-load free-unit allowances. The plan raises exactly what you ask for. Check with a CA before you
+        redeem.
+      </p>
+    </>
+  );
+}
+
+// ----------------------------------------------------------
 // APP
 // ----------------------------------------------------------
 
 const MODULES = [
   { id: "sip", name: "Redeem vs Loan", Component: SipVsLoan },
+  { id: "sell", name: "Raise Cash", Component: SellPlan },
   { id: "rent", name: "Rent vs Buy", Component: RentVsBuy },
   { id: "prepay", name: "Prepay vs Invest", Component: PrepayVsInvest },
   { id: "tax", name: "Old vs New Tax", Component: TaxRegime },
