@@ -156,6 +156,10 @@ const S = {
     borderBottom: "1px solid #1a1a18",
   },
   rowLabel: { flex: "1 1 200px", fontSize: 15, color: "#b8b8b0" },
+  hint: { display: "block", fontSize: 13, lineHeight: 1.5, color: "#8a8a82", marginTop: 4, maxWidth: 520 },
+  inputCol: { flex: "0 1 180px", width: 180, minWidth: 0, marginLeft: "auto" },
+  readout: { fontSize: 12, color: "#8a8a82", textAlign: "right", marginTop: 4 },
+  slider: { flex: "1 1 100%", width: "100%", margin: "4px 0 0", accentColor: GOLD, cursor: "pointer" },
   input: {
     flex: "0 1 180px",
     width: 180,
@@ -362,10 +366,13 @@ function Button({ variant = "primary", busy, busyText, onClick, children }) {
 
 // ----------------------------------------------------------
 // FORMS
-// A field is { key, label, value, kind, signed }.
+// A field is { key, label, value, kind, signed, hint, slider }.
 //   kind "pct": typed as 12, sent as 0.12 (the ONE place rates convert)
 //   kind "int": whole number of 1 or more (tenures, horizons)
+//   no kind:    rupees, shown back as "₹15.0 L" under the box
 //   signed:     may go below zero (returns and growth rates)
+//   hint:       one plain-English line under the label
+//   slider:     [min, max, step]; the box still takes any typed value
 // ----------------------------------------------------------
 
 function buildBody(fields, values) {
@@ -412,18 +419,49 @@ function useCalculator(fields, run, module) {
   return { values, setField, result, error, loading, submit };
 }
 
+function RowLabel({ label, hint }) {
+  return (
+    <span style={S.rowLabel}>
+      {label}
+      {hint && <span style={S.hint}>{hint}</span>}
+    </span>
+  );
+}
+
+const toNumber = (raw) => Number(String(raw).replace(/,/g, "").trim());
+
 function Fields({ fields, form }) {
-  return fields.map((f) => (
-    <label key={f.key} style={S.row}>
-      <span style={S.rowLabel}>{f.label}</span>
-      <input
-        style={S.input}
-        inputMode="decimal"
-        value={form.values[f.key]}
-        onChange={(e) => form.setField(f.key, e.target.value)}
-      />
-    </label>
-  ));
+  return fields.map((f) => {
+    const raw = form.values[f.key];
+    const n = toNumber(raw);
+    const valid = String(raw).trim() !== "" && Number.isFinite(n);
+    return (
+      <label key={f.key} style={S.row}>
+        <RowLabel label={f.label} hint={f.hint} />
+        <span style={S.inputCol}>
+          <input
+            style={{ ...S.input, width: "100%", marginLeft: 0 }}
+            inputMode="decimal"
+            value={raw}
+            onChange={(e) => form.setField(f.key, e.target.value)}
+          />
+          {!f.kind && valid && n >= 1000 && <span style={{ ...S.readout, display: "block" }}>{inr(n)}</span>}
+        </span>
+        {f.slider && (
+          <input
+            type="range"
+            style={S.slider}
+            aria-label={f.label}
+            min={f.slider[0]}
+            max={f.slider[1]}
+            step={f.slider[2]}
+            value={valid ? n : f.slider[0]}
+            onChange={(e) => form.setField(f.key, e.target.value)}
+          />
+        )}
+      </label>
+    );
+  });
 }
 
 function NumbersCard({ fields, form, extra }) {
@@ -444,17 +482,54 @@ function NumbersCard({ fields, form, extra }) {
 // MODULE 1: REDEEM VS LOAN
 // ----------------------------------------------------------
 
+// Shared slider ranges. Typing outside them still works.
+const LOAN_RATE_RANGE = [6, 15, 0.05];
+const RETURN_RANGE = [-5, 20, 0.5];
+const YEARS_RANGE = [1, 40, 1];
+const TENURE_RANGE = [1, 30, 1];
+
+const HINT = {
+  loanRate: "The yearly interest rate your bank offers on the loan.",
+  equityReturn:
+    "What you expect your funds to earn each year, on average. Nobody knows this for sure, so try a few values and see how much the answer moves.",
+  taxSlab: "The rate on the top part of your income, such as 20% or 30%. Your last tax return shows it.",
+};
+
 const SIP_FIELDS = [
-  { key: "corpus", label: "Current SIP value (₹)", value: "1500000" },
-  { key: "invested", label: "Amount you invested (₹)", value: "1000000" },
-  { key: "cash_need", label: "Cash needed for the home (₹)", value: "1500000" },
-  { key: "monthly_sip", label: "Monthly SIP (₹)", value: "20000" },
-  { key: "loan_tenure", label: "Loan tenure (years)", value: "15", kind: "int" },
-  { key: "loan_rate", label: "Loan rate (% a year)", value: "9", kind: "pct" },
-  { key: "equity_return", label: "Equity return (% a year)", value: "12", kind: "pct", signed: true },
-  { key: "tax_slab", label: "Tax slab (%)", value: "30", kind: "pct" },
-  { key: "horizon", label: "Horizon (years)", value: "15", kind: "int" },
-  { key: "stepup_rate", label: "SIP step-up (% a year)", value: "0", kind: "pct" },
+  {
+    key: "corpus", label: "Current SIP value (₹)", value: "1500000",
+    hint: "What your mutual funds are worth today: the current value in your app or statement.",
+  },
+  {
+    key: "invested", label: "Amount you invested (₹)", value: "1000000",
+    hint: "The total you've put in so far. The gap between this and today's value is your gain, and the gain is what gets taxed if you redeem.",
+  },
+  {
+    key: "cash_need", label: "Cash needed for the home (₹)", value: "1500000",
+    hint: "The money the purchase needs from you, which you'd either redeem or borrow.",
+  },
+  { key: "monthly_sip", label: "Monthly SIP (₹)", value: "20000", hint: "What you invest every month." },
+  {
+    key: "loan_tenure", label: "Loan tenure (years)", value: "15", kind: "int", slider: TENURE_RANGE,
+    hint: "How many years you'd take to repay the loan.",
+  },
+  {
+    key: "loan_rate", label: "Loan rate (% a year)", value: "9", kind: "pct", slider: LOAN_RATE_RANGE,
+    hint: HINT.loanRate,
+  },
+  {
+    key: "equity_return", label: "Equity return (% a year)", value: "12", kind: "pct", signed: true,
+    slider: RETURN_RANGE, hint: HINT.equityReturn,
+  },
+  { key: "tax_slab", label: "Tax slab (%)", value: "30", kind: "pct", hint: HINT.taxSlab },
+  {
+    key: "horizon", label: "Horizon (years)", value: "15", kind: "int", slider: YEARS_RANGE,
+    hint: "How many years ahead to compare the two choices.",
+  },
+  {
+    key: "stepup_rate", label: "SIP step-up (% a year)", value: "0", kind: "pct", slider: [0, 20, 1],
+    hint: "How much you raise your SIP each year, say as your salary grows. 0 if it stays the same.",
+  },
 ];
 
 function SipVsLoan() {
@@ -515,14 +590,20 @@ function SipVsLoan() {
         extra={
           <>
             <label style={S.row}>
-              <span style={S.rowLabel}>Tax regime</span>
+              <RowLabel
+                label="Tax regime"
+                hint="Which tax system you file under. In the old one, home loan interest and principal repayments cut your tax; the new one doesn't allow that."
+              />
               <select style={S.input} value={regime} onChange={(e) => setRegime(e.target.value)}>
                 <option value="old">Old</option>
                 <option value="new">New</option>
               </select>
             </label>
             <label style={S.row}>
-              <span style={S.rowLabel}>Reinvest the EMI when comparing</span>
+              <RowLabel
+                label="Reinvest the EMI when comparing"
+                hint="A fairer test: if you redeem, you have no EMI to pay, so this invests that same amount every month as an extra SIP."
+              />
               <button
                 type="button"
                 aria-pressed={reinvestEmi}
@@ -634,15 +715,40 @@ function SipVsLoan() {
 // ----------------------------------------------------------
 
 const RENT_FIELDS = [
-  { key: "property_price", label: "Property price (₹)", value: "10000000" },
-  { key: "down_payment_pct", label: "Down payment (%)", value: "20", kind: "pct" },
-  { key: "loan_rate", label: "Loan rate (% a year)", value: "9", kind: "pct" },
-  { key: "loan_tenure", label: "Loan tenure (years)", value: "20", kind: "int" },
-  { key: "monthly_rent", label: "Monthly rent today (₹)", value: "30000" },
-  { key: "rent_growth", label: "Rent growth (% a year)", value: "5", kind: "pct", signed: true },
-  { key: "property_appreciation", label: "Property appreciation (% a year)", value: "7", kind: "pct", signed: true },
-  { key: "equity_return", label: "Equity return (% a year)", value: "12", kind: "pct", signed: true },
-  { key: "horizon", label: "Horizon (years)", value: "20", kind: "int" },
+  { key: "property_price", label: "Property price (₹)", value: "10000000", hint: "The full price of the home." },
+  {
+    key: "down_payment_pct", label: "Down payment (%)", value: "20", kind: "pct", slider: [10, 100, 5],
+    hint: "The share of the price you pay yourself; the bank lends the rest. Banks ask for at least 10–25%, depending on the loan size.",
+  },
+  {
+    key: "loan_rate", label: "Loan rate (% a year)", value: "9", kind: "pct", slider: LOAN_RATE_RANGE,
+    hint: HINT.loanRate,
+  },
+  {
+    key: "loan_tenure", label: "Loan tenure (years)", value: "20", kind: "int", slider: TENURE_RANGE,
+    hint: "How many years you'd take to repay the loan.",
+  },
+  {
+    key: "monthly_rent", label: "Monthly rent today (₹)", value: "30000",
+    hint: "What a similar home would cost to rent today.",
+  },
+  {
+    key: "rent_growth", label: "Rent growth (% a year)", value: "5", kind: "pct", signed: true, slider: [0, 15, 0.5],
+    hint: "How much the rent goes up each year.",
+  },
+  {
+    key: "property_appreciation", label: "Property appreciation (% a year)", value: "7", kind: "pct", signed: true,
+    slider: [-5, 15, 0.5], hint: "How much the home's value grows each year.",
+  },
+  {
+    key: "equity_return", label: "Equity return (% a year)", value: "12", kind: "pct", signed: true,
+    slider: RETURN_RANGE,
+    hint: "What your money earns each year if you rent and invest it instead: the down payment, plus any month the EMI would have cost more than rent.",
+  },
+  {
+    key: "horizon", label: "Horizon (years)", value: "20", kind: "int", slider: YEARS_RANGE,
+    hint: "How many years ahead to compare renting and buying.",
+  },
 ];
 
 function RentVsBuy() {
@@ -700,13 +806,28 @@ function RentVsBuy() {
 // ----------------------------------------------------------
 
 const PREPAY_FIELDS = [
-  { key: "principal", label: "Outstanding loan (₹)", value: "5000000" },
-  { key: "annual_rate", label: "Loan rate (% a year)", value: "9", kind: "pct" },
-  { key: "tenure_months", label: "Remaining tenure (months)", value: "180", kind: "int" },
-  { key: "surplus", label: "One-time surplus (₹)", value: "500000" },
-  { key: "tax_slab", label: "Tax slab (%)", value: "30", kind: "pct" },
-  { key: "sec24b_cap", label: "Section 24(b) cap a year (₹)", value: "200000" },
-  { key: "equity_return", label: "Equity return (% a year)", value: "12", kind: "pct", signed: true },
+  { key: "principal", label: "Outstanding loan (₹)", value: "5000000", hint: "How much you still owe the bank." },
+  {
+    key: "annual_rate", label: "Loan rate (% a year)", value: "9", kind: "pct", slider: LOAN_RATE_RANGE,
+    hint: "The yearly interest rate on your loan today.",
+  },
+  {
+    key: "tenure_months", label: "Remaining tenure (months)", value: "180", kind: "int", slider: [12, 360, 1],
+    hint: "How many EMIs are left. 15 years is 180 months.",
+  },
+  {
+    key: "surplus", label: "One-time surplus (₹)", value: "500000",
+    hint: "The lump sum you could put into the loan or invest, such as a bonus.",
+  },
+  { key: "tax_slab", label: "Tax slab (%)", value: "30", kind: "pct", hint: HINT.taxSlab },
+  {
+    key: "sec24b_cap", label: "Section 24(b) cap a year (₹)", value: "200000",
+    hint: "The most home loan interest you can deduct from your income each year: ₹2 L for a home you live in, under the old regime. Enter 0 if you file under the new regime. Prepaying cuts the interest, so some of this deduction goes unused.",
+  },
+  {
+    key: "equity_return", label: "Equity return (% a year)", value: "12", kind: "pct", signed: true,
+    slider: RETURN_RANGE, hint: "What the surplus would earn each year if you invested it instead.",
+  },
 ];
 
 function prepayVerdict(r) {
@@ -820,8 +941,14 @@ function PrepayVsInvest() {
 // ----------------------------------------------------------
 
 const TAX_FIELDS = [
-  { key: "gross_income", label: "Gross annual income (₹)", value: "1200000" },
-  { key: "old_regime_deductions", label: "Old regime deductions (₹)", value: "250000" },
+  {
+    key: "gross_income", label: "Gross annual income (₹)", value: "1200000",
+    hint: "Your yearly salary or pension before tax and deductions.",
+  },
+  {
+    key: "old_regime_deductions", label: "Old regime deductions (₹)", value: "250000",
+    hint: "What you'd claim under the old regime: 80C (PF, ELSS, life insurance, up to ₹1.5 L), 80D health insurance, HRA, home loan interest, NPS. Leave out the ₹50,000 standard deduction; it's added for you.",
+  },
 ];
 
 function taxBreakevenNote(amount, newRegimeTax) {
@@ -893,10 +1020,22 @@ function TaxRegime() {
 // ----------------------------------------------------------
 
 const SELL_FIELDS = [
-  { key: "target", label: "Cash you need in hand (₹)", value: "1000000" },
-  { key: "slab_rate", label: "Your income tax slab (%)", value: "30", kind: "pct" },
-  { key: "surcharge", label: "Surcharge (%), 0 below ₹50 L income", value: "0", kind: "pct" },
-  { key: "ltcg_exemption_used", label: "LTCG exemption already used this year (₹)", value: "0" },
+  {
+    key: "target", label: "Cash you need in hand (₹)", value: "1000000",
+    hint: "The money you want in your bank account after exit loads and the tax on the sale.",
+  },
+  {
+    key: "slab_rate", label: "Your income tax slab (%)", value: "30", kind: "pct",
+    hint: "The rate on the top part of your income. Some gains, such as on debt funds bought since April 2023, are taxed at this rate.",
+  },
+  {
+    key: "surcharge", label: "Surcharge (%), 0 below ₹50 L income", value: "0", kind: "pct",
+    hint: "An extra charge on your tax once income passes ₹50 L a year: 10%, 15%, 25% or 37% depending on income. On equity gains and long-term gains it's capped at 15%, which the plan applies for you.",
+  },
+  {
+    key: "ltcg_exemption_used", label: "LTCG exemption already used this year (₹)", value: "0",
+    hint: "The first ₹1.25 L of long-term gains from equity funds each financial year is tax-free. If you've already booked such gains since 1 April, enter them here.",
+  },
 ];
 
 const FUND_KINDS = [
@@ -1037,15 +1176,23 @@ function FundsEditor({ funds, setFunds }) {
             </select>
           </div>
           {[
-            ["nav", "NAV today (₹)"],
-            ["exit_load", "Exit load (%)"],
-            ["exit_load_days", "Charged if sold within (days)"],
+            ["nav", "NAV today (₹)", "The price of one unit today, shown in your app or on the fund's website."],
+            ["exit_load", "Exit load (%)", "A fee some funds charge if you sell too soon, often 1%. Enter 0 if there's none."],
+            [
+              "exit_load_days",
+              "Charged if sold within (days)",
+              "How long after each purchase the fee applies, often 365 days.",
+            ],
             ...(f.kind === "equity" || f.kind === "elss"
-              ? [["nav_31jan2018", "NAV on 31 Jan 2018 (₹), only for units bought before Feb 2018"]]
+              ? [[
+                  "nav_31jan2018",
+                  "NAV on 31 Jan 2018 (₹), only for units bought before Feb 2018",
+                  "Older units get a tax break: gains up to this date's price aren't taxed. Find it on the fund's website or AMFI's. Leave blank if you have no such units.",
+                ]]
               : []),
-          ].map(([key, label]) => (
+          ].map(([key, label, hint]) => (
             <label key={key} style={S.row}>
-              <span style={S.rowLabel}>{label}</span>
+              <RowLabel label={label} hint={hint} />
               <input
                 style={S.input}
                 inputMode="decimal"
@@ -1275,7 +1422,10 @@ function SellPlan() {
         <div style={S.card}>
           <Label>When to sell</Label>
           <label style={S.row}>
-            <span style={S.rowLabel}>Need the money by</span>
+            <RowLabel
+              label="Need the money by"
+              hint="The last date you can wait. Waiting can cut tax if some units are about to turn long-term, and selling part before and part after 31 March uses two years' ₹1.25 L exemptions."
+            />
             <input
               type="date"
               style={{ ...S.input, colorScheme: "dark" }}
