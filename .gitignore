@@ -12,6 +12,9 @@ env/
 .pytest_cache/
 .ipynb_checkpoints/
 
+# RAG embedding cache (rebuilt from the corpus)
+rag/.cache/
+
 # Node
 node_modules/
 frontend/node_modules/
